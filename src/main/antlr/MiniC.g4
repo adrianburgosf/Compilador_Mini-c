@@ -2,10 +2,11 @@ grammar MiniC;
 
 @header { package org.example.minic.parser; }
 
-// ---------- Parser ----------
+// ---------------- Parser ----------------
 program         : (functionDecl | varDecl)* EOF ;
 
-type            : INT | VOID ;
+// tipos por ahora
+type            : INT | VOID | CHAR | BOOL | STRING ;
 
 functionDecl    : type ID LPAREN paramList? RPAREN block ;
 paramList       : param (COMMA param)* ;
@@ -15,14 +16,14 @@ block           : LBRACE stmt* RBRACE ;
 
 stmt            : returnStmt
                 | exprStmt
-                | varDecl               // <- ahora también deja declarar dentro de bloques
+                | varDecl
                 | block
                 ;
 
 returnStmt      : RETURN expr? SEMI ;
 exprStmt        : expr? SEMI ;
 
-// Precedencias (de menor a mayor)
+// precedencias (de menor a mayor)
 expr            : assignment ;
 assignment      : logicalOr (ASSIGN assignment)? ;
 logicalOr       : logicalAnd (OR logicalAnd)* ;
@@ -36,29 +37,46 @@ unary           : (NOT | MINUS) unary
                 ;
 
 primary         : INT_LIT
+                | CHAR_LIT
+                | STR_LIT
+                | TRUE
+                | FALSE
                 | ID
                 | LPAREN expr RPAREN
                 ;
 
-// ---------------- NEW: varDecl con inicialización y lista ----------------
+// var decl con lista e inicialización opcional
 varDecl         : type initDeclarator (COMMA initDeclarator)* SEMI ;
 initDeclarator  : ID (ASSIGN expr)? ;
 
-// ---------- Lexer ----------
+// ---------------- Lexer ----------------
+// ¡Orden importa!: keywords antes de ID
+
 WS              : [ \t\r\n]+ -> skip ;
 COMMENT         : '/*' .*? '*/' -> skip ;
 LINE_COMMENT    : '//' ~[\r\n]* -> skip ;
 
-// Palabras reservadas
+// palabras reservadas
 INT             : 'int' ;
 VOID            : 'void' ;
+CHAR            : 'char' ;
+BOOL            : 'bool' ;
+STRING          : 'string' ;
 RETURN          : 'return' ;
+TRUE            : 'true' ;
+FALSE           : 'false' ;
 
-// Identificadores y literales
+// identificadores y literales
 ID              : [a-zA-Z_][a-zA-Z_0-9]* ;
 INT_LIT         : [0-9]+ ;
 
-// Operadores y símbolos
+// literal de caracter: 'a', '\n', '\\', '\''
+CHAR_LIT        : '\'' ( ~['\\\r\n] | '\\' ['"\\nrt0] ) '\'' ;
+
+// literal de cadena con escapes comunes
+STR_LIT         : '"' ( ~["\\\r\n] | '\\' ['"\\nrt0] )* '"' ;
+
+// operadores y símbolos
 PLUS  : '+' ;
 MINUS : '-' ;
 STAR  : '*' ;
