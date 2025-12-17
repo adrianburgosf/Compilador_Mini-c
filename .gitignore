@@ -41,3 +41,23 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+# ----- Mini-C compiler (extra) -----
+
+# Ensamblados / artefactos del simulador
+*.asm
+build/out/
+# Si quisieras conservar asm de ejemplo, guárdalos SOLO aquí:
+!src/test/resources/**/*.asm
+
+# Archivos generados / temporales genéricos
+*.log
+*.tmp
+*.class
+Thumbs.db
+
+# ANTLR (fuentes .g4 SÍ se versionan; lo generado vive en build/ y ya está ignorado)
+# (No añadas MiniCParser.java/lexer generados a src/main/java)
+
+# IDE: ignora todo .idea (ya ignoras varios, pero mejor el dir completo)
+.idea/
