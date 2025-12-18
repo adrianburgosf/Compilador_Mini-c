@@ -26,6 +26,7 @@ tasks.withType(AntlrTask).configureEach {
 
 application {
     mainClass = 'org.example.minic.Main'
+    applicationName = 'minicc'
 }
 
 tasks.withType(JavaCompile).configureEach {
@@ -39,6 +40,4 @@ tasks.register('runGui', JavaExec) {
     description = 'Run MiniC GUI'
     classpath = sourceSets.main.runtimeClasspath
     mainClass = 'org.example.minic.gui.GuiApp'
-    // Opcional: más memoria si lo necesitas
-    // jvmArgs = ['-Xmx512m']
 }

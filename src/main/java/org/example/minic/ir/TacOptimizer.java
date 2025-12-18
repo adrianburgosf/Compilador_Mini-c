@@ -81,7 +81,7 @@ public class TacOptimizer {
                     Integer v = eval(i.op, Integer.parseInt(i.a), Integer.parseInt(i.b));
                     if (v != null) {
                         // Constructor: (TacOp op, String a, String b, String r)  => a=src, r=dst
-                        g.emit(new TacInstr(TacOp.MOV, i.r, String.valueOf(v), null)); // r = const
+                        g.emit(new TacInstr(TacOp.MOV, String.valueOf(v), null, i.r));  // t0 = 7
                         continue;
                     }
                 }

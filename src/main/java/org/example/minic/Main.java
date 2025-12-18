@@ -4,6 +4,8 @@ import org.antlr.v4.runtime.*;
 import org.antlr.v4.runtime.misc.ParseCancellationException;
 import org.antlr.v4.runtime.tree.ParseTree;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -20,34 +22,74 @@ import org.example.minic.mips.MipsGen;
 
 public class Main {
 
+    private static String stripExt(String name) {
+        int i = name.lastIndexOf('.');
+        return (i <= 0) ? name : name.substring(0, i);
+    }
+
     private static void usageAndExit() {
-        System.err.println("Usage: minicc [--dump-symbols] [--check-uses] [--emit-tac] [--emit-mips] <file.mc>");
+        System.err.println("Usage (required by spec):");
+        System.err.println("  minicc <input.mc> -S -o <output.s> [-O] [--dump-ir]");
+        System.err.println();
+        System.err.println("Options:");
+        System.err.println("  -S             : generate MIPS32 assembly (.s/.asm)");
+        System.err.println("  -o <file>      : output assembly file (required when -S is used)");
+        System.err.println("  -O             : enable IR optimizations (TAC optimizer)");
+        System.err.println("  --dump-ir      : print TAC before and after optimization");
+        System.err.println();
+        System.err.println("Legacy options (kept for compatibility):");
         System.err.println("  --dump-symbols : imprime scopes y símbolos");
         System.err.println("  --check-uses   : valida no declaradas y aridad de llamadas");
-        System.err.println("  --emit-tac     : genera y muestra TAC (optimizado)");
-        System.err.println("  --emit-mips    : genera y muestra MIPS32 (desde TAC optimizado)");
+        System.err.println("  --emit-tac     : imprime TAC (respeta -O si se pasó)");
+        System.err.println("  --emit-mips    : imprime MIPS32 a stdout (respeta -O si se pasó)");
         System.exit(1);
     }
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0) usageAndExit();
 
+        // Spec CLI: minicc input.mc -S -o output.s [-O] [--dump-ir]
+        boolean emitAsmFile = false;     // -S
+        String outAsm = null;            // -o
+        boolean optimize = false;        // -O
+        boolean dumpIr = false;          // --dump-ir
+
+        // Legacy flags (still useful for debugging)
         boolean dumpSymbols = false;
         boolean checkUses   = false;
         boolean emitTac     = false;
-        boolean emitMips    = false;
-        String  pathStr     = null;
+        boolean emitMipsStdout = false;
 
-        for (String a : args) {
+        String pathStr = null;
+
+        for (int i = 0; i < args.length; i++) {
+            String a = args[i];
             switch (a) {
+                case "-S" -> emitAsmFile = true;
+                case "-o" -> {
+                    if (i + 1 >= args.length) usageAndExit();
+                    outAsm = args[++i];
+                }
+                case "-O" -> optimize = true;
+                case "--dump-ir" -> dumpIr = true;
+
                 case "--dump-symbols" -> dumpSymbols = true;
                 case "--check-uses"   -> checkUses   = true;
                 case "--emit-tac"     -> emitTac     = true;
-                case "--emit-mips"    -> emitMips    = true;
-                default               -> pathStr     = a;
+                case "--emit-mips"    -> emitMipsStdout = true;
+
+                default -> {
+                    if (a.startsWith("-")) usageAndExit();
+                    pathStr = a;
+                }
             }
         }
+
         if (pathStr == null) usageAndExit();
+        if (emitAsmFile && (outAsm == null || outAsm.isBlank())) {
+            // el formato requerido por la guía siempre incluye -o
+            usageAndExit();
+        }
 
         Path path = Paths.get(pathStr);
         CharStream input = CharStreams.fromPath(path);
@@ -65,8 +107,8 @@ public class Main {
         try {
             ParseTree tree = parser.program();
 
-            // Entrar a semántica si se pidió cualquiera de estas banderas
-            if (dumpSymbols || checkUses || emitTac || emitMips) {
+            // Entrar a semántica si se pidió cualquiera de estas banderas (spec o legacy)
+            if (dumpSymbols || checkUses || emitTac || emitMipsStdout || emitAsmFile || dumpIr || optimize) {
                 SymbolTable st = new SymbolTable();
                 org.example.minic.semantics.Builtins.install(st);
 
@@ -75,7 +117,7 @@ public class Main {
                 collector.visit(tree);
 
                 // 2) Validación de usos (existencia/ámbito/aridad)
-                if (checkUses || emitTac || emitMips) {
+                if (checkUses || emitTac || emitMipsStdout || emitAsmFile || dumpIr) {
                     new CheckUses(st, collector).visit(tree);
                 }
 
@@ -95,23 +137,46 @@ public class Main {
                     System.exit(3);
                 }
 
-                // 6) Generación de IR y optimización
-                if (emitTac || emitMips) {
+                // 6) Generación de IR (+ opcionalmente optimización)
+                if (emitTac || emitMipsStdout || emitAsmFile || dumpIr) {
                     TacGen gen = new TacGen(st, collector);
                     gen.visit(tree);
                     TacProgram prog = gen.getProgram();
 
-                    // OPT: aplicar optimizaciones (const folding, mov redundante, etc.)
-                    TacOptimizer opt = new TacOptimizer();
-                    TacProgram optProg = opt.optimize(prog);
+                    if (dumpIr) {
+                        System.out.println("=== TAC (before optimization) ===");
+                        System.out.print(prog.toString());
+                        if (!prog.toString().endsWith("\n")) System.out.println();
+                    }
+
+                    TacProgram finalProg = prog;
+                    if (optimize) {
+                        TacOptimizer opt = new TacOptimizer();
+                        finalProg = opt.optimize(prog);
+                    }
+
+                    if (dumpIr) {
+                        System.out.println("=== TAC (after optimization) ===");
+                        System.out.print(finalProg.toString());
+                        if (!finalProg.toString().endsWith("\n")) System.out.println();
+                    }
 
                     if (emitTac) {
-                        System.out.println(optProg.toString());   // imprimir TAC optimizado
+                        // Por compatibilidad, imprime el TAC final (optimizado solo si -O)
+                        System.out.print(finalProg.toString());
+                        if (!finalProg.toString().endsWith("\n")) System.out.println();
                     }
-                    if (emitMips) {
+
+                    if (emitMipsStdout || emitAsmFile) {
                         MipsGen mg = new MipsGen();
-                        String asm = mg.emitProgram(optProg);     // emitir desde TAC optimizado
-                        System.out.println(asm);
+                        String asm = mg.emitProgram(finalProg);
+                        if (emitMipsStdout) {
+                            System.out.println(asm);
+                        }
+                        if (emitAsmFile) {
+                            Path outPath = Paths.get(outAsm);
+                            Files.writeString(outPath, asm, StandardCharsets.US_ASCII);
+                        }
                     }
                     return;
                 }

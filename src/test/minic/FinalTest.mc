@@ -29,6 +29,6 @@ int main(){
         println();
         cont = cont + 1;
     }
-    print_str("Gracias por usar Mini‑C!\n");
+    print_str("Gracias por usar MiniC!\n");
     return 0;
 }
