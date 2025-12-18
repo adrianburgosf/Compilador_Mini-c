@@ -11,6 +11,9 @@ type            : INT | VOID | CHAR | BOOL | STRING ;
 functionDecl    : type ID LPAREN paramList? RPAREN block ;
 paramList       : param (COMMA param)* ;
 param           : type ID ;
+forStmt
+  : FOR LPAREN expr? SEMI expr? SEMI expr? RPAREN stmt
+  ;
 
 block           : LBRACE stmt* RBRACE ;
 
@@ -19,6 +22,7 @@ stmt            : returnStmt
                 | varDecl
                 | selectionStmt          // <-- if / else
                 | iterationStmt          // <-- while
+                | forStmt
                 | block
                 ;
 
@@ -30,7 +34,14 @@ exprStmt        : expr? SEMI ;
 
 // precedencias
 expr            : assignment ;
-assignment      : logicalOr (ASSIGN assignment)? ;
+assignment
+  : lvalue ASSIGN assignment
+  | logicalOr
+  ;
+
+lvalue
+  : ID (LBRACK expr RBRACK)*
+  ;
 logicalOr       : logicalAnd (OR logicalAnd)* ;
 logicalAnd      : equality (AND equality)* ;
 equality        : relational ((EQ | NEQ) relational)* ;
@@ -47,14 +58,24 @@ primary         : INT_LIT
                 | TRUE
                 | FALSE
                 | ID
-                | ID LPAREN argList? RPAREN
+                | ID LPAREN argList? RPAREN   // llamada
+                | lvalue
                 | LPAREN expr RPAREN
                 ;
 
 argList         : expr (COMMA expr)* ;
 
-varDecl         : type initDeclarator (COMMA initDeclarator)* SEMI ;
-initDeclarator  : ID (ASSIGN expr)? ;
+varDecl
+  : type initDeclarator (COMMA initDeclarator)* SEMI
+  ;
+
+initDeclarator
+  : declarator (ASSIGN expr)?
+  ;
+
+declarator
+  : ID (LBRACK INT_LIT RBRACK)*
+  ;
 
 // ---------------- Lexer ----------------
 WS              : [ \t\r\n]+ -> skip ;
@@ -73,6 +94,8 @@ FALSE           : 'false' ;
 IF              : 'if' ;               // <-- nuevo
 ELSE            : 'else' ;             // <-- nuevo
 WHILE           : 'while' ;            // <-- nuevo
+FOR             : 'for' ;
+
 
 // id y literales
 ID              : [a-zA-Z_][a-zA-Z_0-9]* ;
@@ -105,3 +128,5 @@ LBRACE: '{' ;
 RBRACE: '}' ;
 SEMI  : ';' ;
 COMMA : ',' ;
+LBRACK  : '[' ;
+RBRACK  : ']' ;

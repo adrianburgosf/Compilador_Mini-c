@@ -1,6 +1,7 @@
 package org.example.minic.semantics;
 
 import java.util.List;
+import org.example.minic.semantics.SymbolTable;
 
 public final class Builtins {
 
@@ -16,6 +17,39 @@ public final class Builtins {
             g.define(f);
         }
     }
+
+    public void declareBuiltins() {
+        SymbolTable st = new SymbolTable();
+        // --- camelCase (compatibilidad) ---
+        FuncSymbol pInt  = new FuncSymbol("printInt",    Type.VOID);
+        pInt.params.add(new VarSymbol("x", Type.INT));
+        st.define(pInt);
+
+        FuncSymbol pChar = new FuncSymbol("printChar",   Type.VOID);
+        pChar.params.add(new VarSymbol("c", Type.CHAR));
+        st.define(pChar);
+
+        FuncSymbol pStr  = new FuncSymbol("printString", Type.VOID);
+        pStr.params.add(new VarSymbol("s", Type.STRING));
+        st.define(pStr);
+
+        // --- snake_case (lo que usas en tu ejemplo) ---
+        FuncSymbol p_int  = new FuncSymbol("print_int", Type.VOID);
+        p_int.params.add(new VarSymbol("x", Type.INT));
+        st.define(p_int);
+
+        FuncSymbol p_char = new FuncSymbol("print_char", Type.VOID);
+        p_char.params.add(new VarSymbol("c", Type.CHAR));
+        st.define(p_char);
+
+        FuncSymbol p_str  = new FuncSymbol("print_str", Type.VOID);
+        p_str.params.add(new VarSymbol("s", Type.STRING));
+        st.define(p_str);
+
+        FuncSymbol nl = new FuncSymbol("println", Type.VOID);
+        st.define(nl);
+    }
+
 
     public static void install(SymbolTable st) {
         // camelCase

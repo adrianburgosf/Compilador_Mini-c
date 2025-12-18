@@ -20,8 +20,7 @@ public enum Type {
     public static boolean assignmentCompatible(Type lhs, Type rhs) {
         if (lhs == rhs) return true;
         // Permitir int <- char y bool <- int/char
-        if (lhs == INT && rhs == CHAR) return true;
-        if (lhs == BOOL && (rhs == INT || rhs == CHAR || rhs == BOOL)) return true;
+        if ((lhs == INT && rhs == CHAR) || (lhs == CHAR && rhs == INT)) return true;
         return false;
     }
 

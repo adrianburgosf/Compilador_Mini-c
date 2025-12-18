@@ -1,103 +1,103 @@
 package org.example.minic.semantics;
 
 import org.antlr.v4.runtime.Token;
-import org.antlr.v4.runtime.tree.ParseTree;
-import org.antlr.v4.runtime.tree.ParseTreeProperty;
 import org.example.minic.parser.MiniCBaseVisitor;
 import org.example.minic.parser.MiniCParser;
 
-public class CollectSymbols extends MiniCBaseVisitor<Void> {
-    private final SymbolTable st;
+import java.util.ArrayList;
+import java.util.List;
 
-    // Mapa: nodo del árbol -> scope activo en ese punto
-    private final ParseTreeProperty<Scope> scopeOf = new ParseTreeProperty<>();
-    public Scope getScopeOf(ParseTree node) { return scopeOf.get(node); }
+public class CollectSymbols extends MiniCBaseVisitor<Void> {
+
+    private final SymbolTable st;
+    private final java.util.Map<Object, Scope> scopeOf = new java.util.HashMap<>();
 
     public CollectSymbols(SymbolTable st) { this.st = st; }
 
+    public Scope getScopeOf(Object node) { return scopeOf.get(node); }
+
     @Override
     public Void visitProgram(MiniCParser.ProgramContext ctx) {
-        // scope global ya está en la cima de la pila
-        scopeOf.put(ctx, st.current());
+        scopeOf.put(ctx, st.current()); // global
         return super.visitProgram(ctx);
+    }
+
+    private int[] parseDims(MiniCParser.DeclaratorContext dec) {
+        // declarator : ID ('[' INT_LIT ']')*
+        List<Integer> dims = new ArrayList<>();
+        for (var lit : dec.INT_LIT()) {
+            try { dims.add(Integer.parseInt(lit.getText())); }
+            catch (Exception ignored) { dims.add(0); }
+        }
+        int[] out = new int[dims.size()];
+        for (int i = 0; i < dims.size(); i++) out[i] = dims.get(i);
+        return out;
     }
 
     @Override
     public Void visitVarDecl(MiniCParser.VarDeclContext ctx) {
         Type t = Type.fromToken(ctx.type().getText());
-        for (MiniCParser.InitDeclaratorContext id : ctx.initDeclarator()) {
-            String name = id.ID().getText();
-            VarSymbol v = new VarSymbol(name, t);
-            boolean ok = st.define(v);
-            if (!ok) {
-                st.error(loc(id.ID().getSymbol()) + " redefinición de variable: " + name);
+
+        for (var id : ctx.initDeclarator()) {
+            var dec = id.declarator();
+            String name = dec.ID().getText();
+            int[] dims = parseDims(dec);
+
+            VarSymbol v = new VarSymbol(name, t, dims);
+
+            if (!st.define(v)) {
+                Token tok = dec.ID().getSymbol();
+                st.error(tok, "redefinición de variable: " + name);
             }
-            // La expresión de inicialización se visita en fases posteriores (tipos/uses)
         }
         return null;
     }
 
     @Override
     public Void visitFunctionDecl(MiniCParser.FunctionDeclContext ctx) {
-        String fname = ctx.ID().getText();
+        String name = ctx.ID().getText();
         Type ret = Type.fromToken(ctx.type().getText());
-        FuncSymbol f = new FuncSymbol(fname, ret);
 
-        boolean ok = st.define(f);
-        if (!ok) {
-            st.error(loc(ctx.ID().getSymbol()) + " redefinición de función: " + fname);
+        FuncSymbol f = new FuncSymbol(name, ret);
+        if (!st.define(f)) {
+            st.error(ctx.ID().getSymbol(), "redefinición de función: " + name);
+            return null;
         }
 
-        // Scope de función (para parámetros)
-        LocalScope fscope = new LocalScope(st.current(), "func " + fname);
-        st.push(fscope);
+        // scope de parámetros (padre del bloque)
+        Scope fscope = new LocalScope(st.current(), "func " + name);
         scopeOf.put(ctx, fscope);
 
+        st.push(fscope);
+
         if (ctx.paramList() != null) {
-            for (MiniCParser.ParamContext p : ctx.paramList().param()) {
-                Type pt = Type.fromToken(p.type().getText());
+            for (var p : ctx.paramList().param()) {
                 String pname = p.ID().getText();
-                VarSymbol ps = new VarSymbol(pname, pt);
-                boolean okp = st.define(ps);
-                if (!okp) {
-                    st.error(loc(p.ID().getSymbol()) + " parámetro duplicado: " + pname);
+                Type pt = Type.fromToken(p.type().getText());
+                VarSymbol pv = new VarSymbol(pname, pt);
+
+                if (!st.define(pv)) {
+                    st.error(p.ID().getSymbol(), "parámetro duplicado: " + pname);
                 }
-                f.params.add(ps);
+                f.params.add(pv);
             }
         }
 
-        // Scope del bloque de la función (locals del body)
-        LocalScope body = new LocalScope(fscope, "block of " + fname);
-        st.push(body);
-        scopeOf.put(ctx.block(), body);
-        f.locals = body;
-
-        // Visitar el bloque (esto a su vez manejará sub-bloques)
+        // el bloque crea su propio scope en visitBlock()
         visit(ctx.block());
+        f.locals = scopeOf.get(ctx.block());
 
-        // Cerrar scopes de la función
-        st.pop(); // body
         st.pop(); // fscope
         return null;
     }
 
     @Override
     public Void visitBlock(MiniCParser.BlockContext ctx) {
-        // Crear SIEMPRE un nuevo scope para cada { ... }
-        LocalScope bs = new LocalScope(st.current(), "block");
-        st.push(bs);
+        Scope bs = new LocalScope(st.current(), "block");
         scopeOf.put(ctx, bs);
-
-        // Visitar contenido del bloque
+        st.push(bs);
         super.visitBlock(ctx);
-
-        // Cerrar scope del bloque
         st.pop();
         return null;
-    }
-
-    // Utilidad para mensajes con línea/columna
-    private String loc(Token tok) {
-        return String.format("%d:%d", tok.getLine(), tok.getCharPositionInLine());
     }
 }

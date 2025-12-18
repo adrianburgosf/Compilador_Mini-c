@@ -69,7 +69,7 @@ public class Main {
             if (dumpSymbols || checkUses || emitTac || emitMips) {
                 SymbolTable st = new SymbolTable();
                 org.example.minic.semantics.Builtins.install(st);
-                st.declareBuiltins();
+
                 // 1) Recolección de símbolos
                 CollectSymbols collector = new CollectSymbols(st);
                 collector.visit(tree);

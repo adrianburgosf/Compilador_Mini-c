@@ -1,6 +1,7 @@
 package org.example.minic.semantics;
 
 import java.util.*;
+import org.antlr.v4.runtime.Token;
 
 public class SymbolTable {
     private final Deque<Scope> stack = new ArrayDeque<>();
@@ -57,6 +58,15 @@ public class SymbolTable {
         }
         return null;
     }
+
+    public void error(Token tok, String msg) {
+        if (tok == null) {
+            error(msg);
+            return;
+        }
+        error("line " + tok.getLine() + ":" + tok.getCharPositionInLine() + " " + msg);
+    }
+
 
     public String dump() {
         StringBuilder sb = new StringBuilder();

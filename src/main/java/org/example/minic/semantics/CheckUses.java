@@ -1,52 +1,43 @@
 package org.example.minic.semantics;
 
-import org.antlr.v4.runtime.Token;
 import org.example.minic.parser.MiniCBaseVisitor;
 import org.example.minic.parser.MiniCParser;
 
 public class CheckUses extends MiniCBaseVisitor<Void> {
+
     private final SymbolTable st;
-    private final CollectSymbols cs;   // <<— necesitamos el mapa de scopes
-    private Scope current;             // scope “vivo” al caminar
+    private final CollectSymbols cs;
+    private Scope current;
 
     public CheckUses(SymbolTable st, CollectSymbols cs) {
         this.st = st;
         this.cs = cs;
-        this.current = st.globals(); // comenzamos en global
-    }
-
-    private String loc(Token t) { return t.getLine() + ":" + t.getCharPositionInLine(); }
-
-    @Override
-    public Void visitProgram(MiniCParser.ProgramContext ctx) {
-        current = cs.getScopeOf(ctx); // global
-        return super.visitProgram(ctx);
+        this.current = st.current();
     }
 
     @Override
     public Void visitFunctionDecl(MiniCParser.FunctionDeclContext ctx) {
-        // Entrar al scope del bloque de la función
-        Scope prev = current;
-        Scope body = cs.getScopeOf(ctx.block());
-        if (body != null) current = body;
-        super.visitFunctionDecl(ctx);
-        current = prev;
+        Scope saved = current;
+        Scope fscope = cs.getScopeOf(ctx);       // scope de params
+        if (fscope != null) current = fscope;
+        super.visitFunctionDecl(ctx);            // visitará block y demás
+        current = saved;
         return null;
     }
 
     @Override
     public Void visitBlock(MiniCParser.BlockContext ctx) {
-        Scope prev = current;
-        Scope here = cs.getScopeOf(ctx);
-        if (here != null) current = here;
+        Scope saved = current;
+        Scope bs = cs.getScopeOf(ctx);
+        if (bs != null) current = bs;
         super.visitBlock(ctx);
-        current = prev;
+        current = saved;
         return null;
     }
 
     @Override
     public Void visitVarDecl(MiniCParser.VarDeclContext ctx) {
-        // visit init exprs para usos en RHS
+        // revisar inicializadores
         for (var id : ctx.initDeclarator()) {
             if (id.expr() != null) visit(id.expr());
         }
@@ -54,29 +45,34 @@ public class CheckUses extends MiniCBaseVisitor<Void> {
     }
 
     @Override
-    public Void visitPrimary(MiniCParser.PrimaryContext ctx) {
-        // variable
-        if (ctx.ID() != null && ctx.LPAREN() == null) {
-            String name = ctx.ID().getText();
-            if (st.resolveFrom(current, name) == null) {
-                st.error(loc(ctx.ID().getSymbol()) + " variable no declarada: " + name);
-            }
+    public Void visitLvalue(MiniCParser.LvalueContext ctx) {
+        String name = ctx.ID().getText();
+        Symbol sym = st.resolveFrom(current, name);
+        if (!(sym instanceof VarSymbol)) {
+            st.error(ctx.ID().getSymbol(), "variable no declarada: " + name);
         }
-        // llamada
+        // visitar índices: a[i], m[i][j]
+        for (var e : ctx.expr()) visit(e);
+        return null;
+    }
+
+    @Override
+    public Void visitPrimary(MiniCParser.PrimaryContext ctx) {
+        // llamada: ID '(' argList? ')'
         if (ctx.ID() != null && ctx.LPAREN() != null) {
             String fname = ctx.ID().getText();
             FuncSymbol f = st.resolveFuncGlobal(fname);
             if (f == null) {
-                st.error(loc(ctx.ID().getSymbol()) + " función no declarada: " + fname);
-            } else {
-                int args = (ctx.argList() == null) ? 0 : ctx.argList().expr().size();
-                if (args != f.params.size()) {
-                    st.error(loc(ctx.ID().getSymbol()) + " llamada a " + fname +
-                            " con " + args + " argumentos; esperaba " + f.params.size());
-                }
+                st.error(ctx.ID().getSymbol(), "función no declarada: " + fname);
+                return null;
             }
-            if (ctx.argList() != null) visit(ctx.argList());
+            int got = (ctx.argList() == null) ? 0 : ctx.argList().expr().size();
+            int exp = f.params.size();
+            if (got != exp) {
+                st.error(ctx.ID().getSymbol(),
+                        "aridad incorrecta en " + fname + ": esperado " + exp + " recibido " + got);
+            }
         }
-        return null;
+        return super.visitPrimary(ctx); // para que baje a lvalue/expr/etc
     }
 }

@@ -95,7 +95,7 @@ public class TacGen extends MiniCBaseVisitor<String> {
         for (var id : ctx.initDeclarator()) {
             if (id.expr() != null) {
                 String rhs  = visit(id.expr());
-                String name = id.ID().getText();
+                String name = id.declarator().ID().getText();
                 mov(name, rhs);
             }
         }
@@ -105,14 +105,27 @@ public class TacGen extends MiniCBaseVisitor<String> {
     // ---------------- Expresiones ----------------
     @Override
     public String visitAssignment(MiniCParser.AssignmentContext ctx) {
+
+        // caso: lvalue '=' assignment
         if (ctx.ASSIGN() != null) {
-            String lhs = visit(ctx.logicalOr());     // esperamos un ID
+            var lv = ctx.lvalue();
             String rhs = visit(ctx.assignment());
-            mov(lhs, rhs);
-            return lhs;
+
+            // por ahora soportamos: x = expr;
+            if (lv.expr() == null || lv.expr().isEmpty()) {
+                String name = lv.ID().getText();
+                mov(name, rhs);
+                return name;
+            }
+
+            // si es arreglo: a[i] = expr;  (lo implementamos luego)
+            throw new RuntimeException("store a arreglo aún no implementado: " + lv.getText());
         }
+
+        // caso: logicalOr
         return visit(ctx.logicalOr());
     }
+
 
     @Override
     public String visitLogicalOr(MiniCParser.LogicalOrContext ctx) {
