@@ -1,8 +1,9 @@
+int add2(int a, int b) { return a + b; }
+
 int main() {
-  printInt(10);
+  printInt( add2(2,3) ); // -> 5
   printChar('\n');
   printString("ok\n");
-  println();
-  println("B\n");
   return 0;
 }
+

@@ -55,6 +55,16 @@ public class MipsGen {
 
         emitPrologue();
 
+        for (int i = 0; i < f.params.size() && i < 4; i++) {
+            String pName = f.params.get(i);
+            switch (i) {
+                case 0 -> emitStore("$a0", pName);
+                case 1 -> emitStore("$a1", pName);
+                case 2 -> emitStore("$a2", pName);
+                case 3 -> emitStore("$a3", pName);
+            }
+        }
+
         boolean sawRet = false;  // evitar epílogo duplicado
 
         for (TacInstr i : f.code) {
@@ -282,7 +292,10 @@ public class MipsGen {
                 text.append("li $v0, 4\nsyscall\n");
             }
             default -> {
-                if (!args.isEmpty()) emitArgToA0(args, 0);
+                // Cargar hasta 4 args en $a0..$a3
+                for (int k = 0; k < args.size() && k < 4; k++) {
+                    emitArgToAi(args, k);
+                }
                 text.append("jal ").append(fname).append("\n");
                 if (i.r != null) emitStore("$v0", i.r);
             }
@@ -306,6 +319,29 @@ public class MipsGen {
             emitLoad(a, "$a0");
         }
     }
+
+    private void emitArgToAi(List<String> args, int idx) {
+        if (idx < 0 || idx >= args.size()) return;
+        String a = args.get(idx);
+        String reg = switch (idx) {
+            case 0 -> "$a0";
+            case 1 -> "$a1";
+            case 2 -> "$a2";
+            default -> "$a3";
+        };
+
+        if (isInt(a)) {
+            text.append("li   ").append(reg).append(", ").append(a).append("\n");
+        } else if (isStringLit(a)) {
+            String label = newStringLabel(a);
+            text.append("la   ").append(reg).append(", ").append(label).append("\n");
+        } else if (isCharLit(a)) {
+            text.append("li   ").append(reg).append(", ").append(charCode(a)).append("\n");
+        } else {
+            emitLoad(a, reg);
+        }
+    }
+
 
     private String newStringLabel(String literal) {
         String label = "str_" + (strCount++);
