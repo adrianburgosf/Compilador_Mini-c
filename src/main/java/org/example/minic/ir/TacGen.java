@@ -229,16 +229,14 @@ public final class TacGen extends MiniCBaseVisitor<String> {
         program.functions.add(fn);
         TacFunction saved = curFn;
         int savedTmp = tmpId;
-        int savedLbl = lblId;
         curFn = fn;
         tmpId = 0;
-        lblId = 0;
 
         visit(ctx.block());
 
         curFn = saved;
         tmpId = savedTmp;
-        lblId = savedLbl;
+
         return null;
     }
 
