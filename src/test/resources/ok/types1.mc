@@ -1,11 +1,11 @@
-char   gch = 'Z';
-bool   gb  = true;
-string gs  = "hola";
+char gch = 'Z';
+bool gb = true;
+string gs = "hola";
 
 int main() {
-  char   c = 'a';
-  bool   b = false;
-  string s = "mini" ;
-  int    x = 5 + 1;
-  return x;  // por ahora retornamos int
+  char c = 'a';
+  bool b = false;
+  string s = "mini";
+  int x = 5 + 1;
+  return x;
 }

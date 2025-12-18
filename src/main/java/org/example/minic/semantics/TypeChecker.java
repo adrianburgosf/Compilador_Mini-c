@@ -6,20 +6,11 @@ import org.antlr.v4.runtime.tree.ParseTreeProperty;
 import org.example.minic.parser.MiniCBaseVisitor;
 import org.example.minic.parser.MiniCParser;
 
-/**
- * Chequeo de tipos:
- * - Infere tipos de expresiones.
- * - Valida operadores (aritm., relac., lógicos).
- * - Verifica return vs tipo de función.
- * - Verifica llamadas (aridad y tipos).
- * - Reporta errores en SymbolTable y permite continuar para acumular mensajes.
- */
 public class TypeChecker extends MiniCBaseVisitor<Type> {
 
     private final SymbolTable st;
     private final CollectSymbols cs;
 
-    // tipo inferido por nodo
     private final ParseTreeProperty<Type> typeOf = new ParseTreeProperty<>();
     public Type getType(ParseTree n) { return typeOf.get(n); }
     private void set(ParseTree n, Type t) { typeOf.put(n, t); }
@@ -38,32 +29,28 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     private Scope scopeOf(ParseTree node) {
         ParseTree p = node;
         while (p != null) {
-            Scope s = cs.getScopeOf(p); // devuelve null si ese nodo no tiene scope asociado
+            Scope s = cs.getScopeOf(p);
             if (s != null) return s;
             p = p.getParent();
         }
-        // fallback: global
-        return st.current();
+        return st.current(); // fallback global
     }
 
-
-    // ---------- Programa y funciones ----------
+    // ---------------- Programa / funciones ----------------
 
     @Override
     public Type visitProgram(MiniCParser.ProgramContext ctx) {
         for (var child : ctx.children) visit(child);
 
-        // Validar main()
+        // validar main()
         Symbol s = st.current().resolve("main");
         if (!(s instanceof FuncSymbol f)) {
             st.error("0:0 falta la función de entrada: int main()");
         } else {
-            if (f.type != Type.INT) {
+            if (f.type != Type.INT)
                 st.error("0:0 main debe ser de tipo int, se encontró " + f.type);
-            }
-            if (!f.params.isEmpty()) {
+            if (!f.params.isEmpty())
                 st.error("0:0 main no debe recibir parámetros (se encontraron " + f.params.size() + ")");
-            }
         }
         return null;
     }
@@ -71,7 +58,6 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     @Override
     public Type visitFunctionDecl(MiniCParser.FunctionDeclContext ctx) {
         String name = ctx.ID().getText();
-        // Resuelve la función en el scope actual (global)
         Symbol s = st.current().resolve(name);
         if (s instanceof FuncSymbol f) {
             currentFunc = f;
@@ -79,13 +65,12 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
             st.error(loc(ctx.ID().getSymbol()) + " función no declarada correctamente: " + name);
             currentFunc = null;
         }
-
         visit(ctx.block());
         currentFunc = null;
         return null;
     }
 
-    // ---------- Sentencias ----------
+    // ---------------- Sentencias ----------------
 
     @Override
     public Type visitBlock(MiniCParser.BlockContext ctx) {
@@ -96,14 +81,10 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     @Override
     public Type visitReturnStmt(MiniCParser.ReturnStmtContext ctx) {
         Type found = Type.VOID;
-        if (ctx.expr() != null) {
-            found = visit(ctx.expr());
-        }
-        if (currentFunc != null) {
-            if (!Type.compatibleReturn(currentFunc.type, found)) {
-                st.error(loc(ctx.getStart()) + " return de tipo " + found +
-                        " en función " + currentFunc.name + " de tipo " + currentFunc.type);
-            }
+        if (ctx.expr() != null) found = visit(ctx.expr());
+        if (currentFunc != null && !Type.compatibleReturn(currentFunc.type, found)) {
+            st.error(loc(ctx.getStart()) + " return de tipo " + found +
+                    " en función " + currentFunc.name + " de tipo " + currentFunc.type);
         }
         return null;
     }
@@ -132,46 +113,72 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     @Override
     public Type visitExprStmt(MiniCParser.ExprStmtContext ctx) {
         if (ctx.expr() != null) {
-            Type t = visit(ctx.expr());   // chequea la expresión
-            set(ctx, t);                  // opcional: propaga tipo al nodo stmt
-            return t;                     // devolvemos el tipo de la expr
+            Type t = visit(ctx.expr());
+            set(ctx, t);
+            return t;
         }
-        // stmt vacío: tipo "void"
         set(ctx, Type.VOID);
         return Type.VOID;
     }
 
-
     @Override
     public Type visitVarDecl(MiniCParser.VarDeclContext ctx) {
         Type declT = Type.fromToken(ctx.type().getText());
+
         for (var id : ctx.initDeclarator()) {
-            if (id.expr() != null) {
-                Type rhs = visit(id.expr());
-                if (!Type.assignmentCompatible(declT, rhs)) {
-                    st.error(loc(id.getStart()) + " asignación incompatible: " + declT + " = " + rhs);
-                }
+            if (id.expr() == null) continue;
+
+            Type rhs = visit(id.expr());
+
+            // --- REDETECCIÓN POR TEXTO (parche robusto) ---
+            String raw = id.expr().getText();
+            if (declT == Type.CHAR && looksLikeChar(raw)) {
+                rhs = Type.CHAR;
+            } else if (declT == Type.STRING && looksLikeString(raw)) {
+                rhs = Type.STRING;
+            } else if (declT == Type.BOOL && looksLikeBool(raw)) {
+                rhs = Type.BOOL;
+            }
+            // ------------------------------------------------
+
+            if (!Type.assignmentCompatible(declT, rhs)) {
+                st.error(loc(id.getStart()) + " asignación incompatible: " + declT + " = " + rhs);
             }
         }
         return null;
     }
 
-    // ---------- Expresiones ----------
+    /** 'a' o '\n' */
+    private static boolean looksLikeChar(String raw) {
+        if (raw == null) return false;
+        if (raw.length() >= 3 && raw.charAt(0) == '\'' && raw.charAt(raw.length()-1) == '\'')
+            return true;
+        // casos como '\'' o '\\' ya vienen entre comillas simples también
+        return false;
+    }
+
+    /** "texto" (acepta escapes) */
+    private static boolean looksLikeString(String raw) {
+        if (raw == null) return false;
+        return raw.length() >= 2 && raw.charAt(0) == '"' && raw.charAt(raw.length()-1) == '"';
+    }
+
+    /** true/false */
+    private static boolean looksLikeBool(String raw) {
+        return "true".equals(raw) || "false".equals(raw);
+    }
+
+
+    // ---------------- Expresiones ----------------
 
     @Override
     public Type visitAssignment(MiniCParser.AssignmentContext ctx) {
         if (ctx.ASSIGN() != null) {
             Type lhsT = visit(ctx.logicalOr());
             Type rhsT = visit(ctx.assignment());
-
-            // permitir equivalencias entre INT y BOOL (0/1)
-            if ((lhsT == Type.INT && rhsT == Type.BOOL) ||
-                    (lhsT == Type.BOOL && rhsT == Type.INT)) {
-                rhsT = lhsT; // considera compatible
-            }
-
-            if (lhsT != rhsT) {
-                st.error(loc(ctx.ASSIGN().getSymbol()) + " asignación incompatible: " + lhsT + " = " + rhsT);
+            if (!Type.assignmentCompatible(lhsT, rhsT)) {
+                st.error(loc(ctx.ASSIGN().getSymbol()) +
+                        " asignación incompatible: " + lhsT + " = " + rhsT);
             }
             set(ctx, lhsT);
             return lhsT;
@@ -179,18 +186,13 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
         return visit(ctx.logicalOr());
     }
 
-
     @Override
     public Type visitLogicalAnd(MiniCParser.LogicalAndContext ctx) {
         Type left = visit(ctx.equality(0));
-        if (!(left == Type.INT || left == Type.BOOL)) {
-            st.error(loc(ctx.start) + " && requiere int/bool");
-        }
+        if (!Type.isBooly(left)) st.error(loc(ctx.start) + " && requiere int/bool");
         for (int i = 1; i < ctx.equality().size(); i++) {
             Type right = visit(ctx.equality(i));
-            if (!(right == Type.INT || right == Type.BOOL)) {
-                st.error(loc(ctx.start) + " && requiere int/bool");
-            }
+            if (!Type.isBooly(right)) st.error(loc(ctx.start) + " && requiere int/bool");
         }
         set(ctx, Type.INT);
         return Type.INT;
@@ -199,32 +201,22 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     @Override
     public Type visitLogicalOr(MiniCParser.LogicalOrContext ctx) {
         Type left = visit(ctx.logicalAnd(0));
-        if (!(left == Type.INT || left == Type.BOOL)) {
-            st.error(loc(ctx.start) + " || requiere int/bool");
-        }
+        if (!Type.isBooly(left)) st.error(loc(ctx.start) + " || requiere int/bool");
         for (int i = 1; i < ctx.logicalAnd().size(); i++) {
             Type right = visit(ctx.logicalAnd(i));
-            if (!(right == Type.INT || right == Type.BOOL)) {
-                st.error(loc(ctx.start) + " || requiere int/bool");
-            }
+            if (!Type.isBooly(right)) st.error(loc(ctx.start) + " || requiere int/bool");
         }
         set(ctx, Type.INT);
         return Type.INT;
     }
-
 
     @Override
     public Type visitEquality(MiniCParser.EqualityContext ctx) {
         Type t0 = visit(ctx.relational(0));
         for (int i = 1; i < ctx.relational().size(); i++) {
             Type ti = visit(ctx.relational(i));
-            // Permitimos comparar int/bool entre sí (ambos tratables como 0/1)
-            boolean ok =
-                    (t0 == Type.INT || t0 == Type.BOOL) &&
-                            (ti == Type.INT || ti == Type.BOOL);
-            if (!ok) {
-                st.error(loc(ctx.start) + " comparación ==/!= requiere int/bool compatibles");
-            }
+            boolean ok = Type.isBooly(t0) && Type.isBooly(ti);
+            if (!ok) st.error(loc(ctx.start) + " comparación ==/!= requiere int/bool compatibles");
         }
         set(ctx, Type.INT);
         return Type.INT;
@@ -235,18 +227,12 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
         Type t0 = visit(ctx.additive(0));
         for (int i = 1; i < ctx.additive().size(); i++) {
             Type ti = visit(ctx.additive(i));
-            // Relacionales definidos sobre enteros (permitimos bool por 0/1 también)
-            boolean ok =
-                    (t0 == Type.INT || t0 == Type.BOOL) &&
-                            (ti == Type.INT || ti == Type.BOOL);
-            if (!ok) {
-                st.error(loc(ctx.start) + " comparación relacional requiere int/bool");
-            }
+            boolean ok = Type.isBooly(t0) && Type.isBooly(ti);
+            if (!ok) st.error(loc(ctx.start) + " comparación relacional requiere int/bool");
         }
         set(ctx, Type.INT);
         return Type.INT;
     }
-
 
     @Override
     public Type visitAdditive(MiniCParser.AdditiveContext ctx) {
@@ -254,10 +240,9 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
         for (int i = 1; i < ctx.multiplicative().size(); i++) {
             Type r = visit(ctx.multiplicative(i));
             if (!Type.isNumeric(t) || !Type.isNumeric(r)) {
-                st.error(loc(ctx.getStart()) + " suma/resta requiere numéricos, se obtuvo "
-                        + t + " y " + r);
+                st.error(loc(ctx.getStart()) + " suma/resta requiere numéricos, se obtuvo " + t + " y " + r);
             }
-            t = Type.INT; // normalizamos a INT
+            t = Type.INT;
         }
         set(ctx, t);
         return t;
@@ -269,8 +254,7 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
         for (int i = 1; i < ctx.unary().size(); i++) {
             Type r = visit(ctx.unary(i));
             if (!Type.isNumeric(t) || !Type.isNumeric(r)) {
-                st.error(loc(ctx.getStart()) + " mul/div/mod requiere numéricos, se obtuvo "
-                        + t + " y " + r);
+                st.error(loc(ctx.getStart()) + " mul/div/mod requiere numéricos, se obtuvo " + t + " y " + r);
             }
             t = Type.INT;
         }
@@ -282,51 +266,75 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
     public Type visitUnary(MiniCParser.UnaryContext ctx) {
         if (ctx.NOT() != null) {
             Type t = visit(ctx.unary());
-            if (!(t == Type.INT || t == Type.BOOL)) {
-                st.error(loc(ctx.NOT().getSymbol()) + " operador ! requiere int/bool");
-            }
+            if (!Type.isBooly(t)) st.error(loc(ctx.NOT().getSymbol()) + " operador ! requiere int/bool");
             set(ctx, Type.INT);
             return Type.INT;
         }
         if (ctx.MINUS() != null) {
             Type t = visit(ctx.unary());
-            if (t != Type.INT) {
-                st.error(loc(ctx.MINUS().getSymbol()) + " operador unario '-' requiere int");
-            }
+            if (t != Type.INT) st.error(loc(ctx.MINUS().getSymbol()) + " operador unario '-' requiere int");
             set(ctx, Type.INT);
             return Type.INT;
         }
         return visit(ctx.primary());
     }
 
-
     @Override
     public Type visitPrimary(MiniCParser.PrimaryContext ctx) {
-        // --- Literales por texto ---
+        // --- 1) Detección por TOKENS (si existen en tu gramática) ---
+        try {
+            if ((ctx.getChildCount() == 1) &&
+                    (ctx.getToken(MiniCParser.STRING, 0) != null ||
+                            ctx.getToken(MiniCParser.STR_LIT, 0) != null)) {
+                set(ctx, Type.STRING);
+                return Type.STRING;
+            }
+            if (ctx.getToken(MiniCParser.CHAR_LIT, 0) != null) {
+                set(ctx, Type.CHAR);
+                return Type.CHAR;
+            }
+            if (ctx.getToken(MiniCParser.INT_LIT, 0) != null) {
+                set(ctx, Type.INT);
+                return Type.INT;
+            }
+            if (ctx.getToken(MiniCParser.TRUE, 0) != null ||
+                    ctx.getToken(MiniCParser.FALSE, 0) != null) {
+                set(ctx, Type.BOOL);
+                return Type.BOOL;
+            }
+        } catch (Throwable ignore) {
+            // Si la gramática no define esos tokens, seguimos con el fallback por texto
+        }
+
+        // --- 2) Fallback por TEXTO (cubre escapes) ---
         String txt = ctx.getText();
         if (txt != null) {
-            if (txt.length() >= 2 && txt.charAt(0) == '"' && txt.charAt(txt.length()-1) == '"') {
-                set(ctx, Type.STRING); return Type.STRING;
+            if (txt.length() >= 2 && txt.charAt(0) == '"' && txt.charAt(txt.length() - 1) == '"') {
+                set(ctx, Type.STRING);
+                return Type.STRING;
             }
-            if (txt.length() >= 3 && txt.charAt(0) == '\'' && txt.charAt(txt.length()-1) == '\'') {
-                set(ctx, Type.CHAR);   return Type.CHAR;
+            if (txt.length() >= 3 && txt.charAt(0) == '\'' && txt.charAt(txt.length() - 1) == '\'') {
+                set(ctx, Type.CHAR);
+                return Type.CHAR;
             }
-            // true/false como INT (0/1)
             if ("true".equals(txt) || "false".equals(txt)) {
-                set(ctx, Type.INT);    return Type.INT;
+                set(ctx, Type.BOOL);
+                return Type.BOOL;
             }
             if (txt.matches("-?\\d+")) {
-                set(ctx, Type.INT);    return Type.INT;
+                set(ctx, Type.INT);
+                return Type.INT;
             }
         }
 
-        // --- (expr) ---
+        // --- 3) (expr) entre paréntesis ---
         if (ctx.LPAREN() != null && ctx.expr() != null) {
             Type t = visit(ctx.expr());
-            set(ctx, t); return t;
+            set(ctx, t);
+            return t;
         }
 
-        // Helper para scope
+        // Helper para obtener scope visible en este nodo
         java.util.function.Function<ParseTree, Scope> scopeOf = node -> {
             ParseTree p = node;
             while (p != null) {
@@ -334,25 +342,28 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
                 if (s != null) return s;
                 p = p.getParent();
             }
-            return st.current();
+            return st.current(); // fallback: global actual
         };
 
-        // --- Identificador simple (variable) ---
+        // --- 4) Variable ID sola ---
         if (ctx.ID() != null && ctx.LPAREN() == null) {
             String name = ctx.ID().getText();
             Scope scope = scopeOf.apply(ctx);
             Symbol sym = (scope != null) ? scope.resolve(name) : null;
             if (sym instanceof VarSymbol v) {
-                set(ctx, v.type); return v.type;
+                set(ctx, v.type);
+                return v.type;
             }
             st.error(loc(ctx.ID().getSymbol()) + " identificador no es variable: " + name);
-            set(ctx, Type.INT); return Type.INT;
+            set(ctx, Type.INT);
+            return Type.INT;
         }
 
-        // --- Llamada a función ---
+        // --- 5) Llamada a función (incluye built-ins) ---
         if (ctx.ID() != null && ctx.LPAREN() != null) {
             String fname = ctx.ID().getText();
 
+            // Recolectar argumentos (nodos y tipos)
             java.util.List<MiniCParser.ExprContext> argNodes =
                     (ctx.argList() != null && ctx.argList().expr() != null)
                             ? ctx.argList().expr()
@@ -361,30 +372,52 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
             java.util.List<Type> argTypes = new java.util.ArrayList<>();
             for (var e : argNodes) if (e != null) argTypes.add(visit(e));
 
-            // Built-ins
+            // ---- Built-ins ----
             if ("printInt".equals(fname)) {
                 if (argTypes.size() != 1 || argTypes.get(0) != Type.INT)
                     st.error(loc(ctx.ID().getSymbol()) + " printInt espera (int)");
-                set(ctx, Type.VOID); return Type.VOID;
+                set(ctx, Type.VOID);
+                return Type.VOID;
             }
+
             if ("printChar".equals(fname)) {
                 if (argTypes.size() != 1 ||
                         !(argTypes.get(0) == Type.CHAR || argTypes.get(0) == Type.INT))
                     st.error(loc(ctx.ID().getSymbol()) + " printChar espera (char) o (int)");
-                set(ctx, Type.VOID); return Type.VOID;
-            }
-            if ("printString".equals(fname)) {
-                if (argTypes.size() != 1 || argTypes.get(0) != Type.STRING)
-                    st.error(loc(ctx.ID().getSymbol()) + " printString espera (string)");
-                set(ctx, Type.VOID); return Type.VOID;
+                set(ctx, Type.VOID);
+                return Type.VOID;
             }
 
-            // Función de usuario
+            if ("printString".equals(fname)) {
+                boolean ok = false;
+                if (argTypes.size() == 1) {
+                    // Caso ideal: ya viene tipado como STRING
+                    if (argTypes.get(0) == Type.STRING) {
+                        ok = true;
+                    } else {
+                        // Fallback robusto: mirar texto crudo del primer argumento
+                        MiniCParser.ExprContext e0 = argNodes.get(0);
+                        String raw = (e0 != null) ? e0.getText() : null;
+                        if (raw != null && raw.length() >= 2 &&
+                                raw.charAt(0) == '"' && raw.charAt(raw.length() - 1) == '"') {
+                            ok = true;
+                        }
+                    }
+                }
+                if (!ok) {
+                    st.error(loc(ctx.ID().getSymbol()) + " printString espera (string)");
+                }
+                set(ctx, Type.VOID);
+                return Type.VOID;
+            }
+
+            // ---- Funciones de usuario ----
             Scope scope = scopeOf.apply(ctx);
             Symbol s = (scope != null) ? scope.resolve(fname) : null;
             if (!(s instanceof FuncSymbol fs)) {
                 st.error(loc(ctx.ID().getSymbol()) + " función no declarada: " + fname);
-                set(ctx, Type.INT); return Type.INT;
+                set(ctx, Type.INT);
+                return Type.INT;
             }
 
             if (fs.params.size() != argTypes.size()) {
@@ -395,7 +428,7 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
                     Type expected = fs.params.get(i).type;
                     Type got = argTypes.get(i);
                     if (expected != got) {
-                        st.error(loc(ctx.ID().getSymbol()) + " tipo de argumento " + (i+1)
+                        st.error(loc(ctx.ID().getSymbol()) + " tipo de argumento " + (i + 1)
                                 + " en " + fname + ": esperado " + expected + " y recibió " + got);
                     }
                 }
@@ -405,8 +438,9 @@ public class TypeChecker extends MiniCBaseVisitor<Type> {
             return fs.type;
         }
 
-        // Fallback
+        // --- 6) Fallback final ---
         set(ctx, Type.INT);
         return Type.INT;
     }
+
 }

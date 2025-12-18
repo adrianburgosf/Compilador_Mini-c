@@ -68,6 +68,7 @@ public class Main {
             // Entrar a semántica si se pidió cualquiera de estas banderas
             if (dumpSymbols || checkUses || emitTac || emitMips) {
                 SymbolTable st = new SymbolTable();
+                org.example.minic.semantics.Builtins.install(st);
                 st.declareBuiltins();
                 // 1) Recolección de símbolos
                 CollectSymbols collector = new CollectSymbols(st);

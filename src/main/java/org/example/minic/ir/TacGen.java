@@ -90,6 +90,8 @@ public class TacGen extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitVarDecl(MiniCParser.VarDeclContext ctx) {
+        if (cur == null) return null;
+
         for (var id : ctx.initDeclarator()) {
             if (id.expr() != null) {
                 String rhs  = visit(id.expr());
