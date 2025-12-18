@@ -5,29 +5,51 @@ import org.example.minic.ir.*;
 import java.util.*;
 
 /**
- * Traduce TAC -> MIPS32 (PCSpim).
- * - Frame fijo de 40 bytes.
- * - Un slot por cada nombre/temporal que aparezca en TAC.
- * - Soporta: MOV, ADD,SUB,MUL,DIV,MOD, LT,LE,GT,GE,EQ,NEQ, AND,OR, NOT,
- *            LABEL, IFZ, GOTO, PARAM, CALL (built-ins), RET.
- * - Built-ins: printInt(x), printChar(c), printString("...").
+ * TAC -> MIPS32 (PCSpim).
+ *
+ * Fixes:
+ * 1) Slots usan offsets negativos respecto a $fp (fp-4, fp-8,...).
+ *    Entonces $fp debe apuntar al "tope" del frame (el $sp viejo),
+ *    no al $sp ya bajado. Si no, escribes fuera del frame y todo da 0.
+ * 2) Evita labels null: (PCSpim warning "Label defined second time ... null:")
  */
 public class MipsGen {
 
     private final StringBuilder data = new StringBuilder();
     private final StringBuilder text = new StringBuilder();
+
+    // stack slots: name -> offset (negativo) relativo a $fp
     private final Map<String, Integer> slot = new HashMap<>();
     private final List<String> paramQueue = new ArrayList<>();
     private int nextSlot = -4;
 
+    // frame size actual (por funcion)
+    private int frameBytes = 0;
+
+    // strings: dedup por literal exacto
+    private final Map<String, String> stringPool = new HashMap<>();
     private int strCount = 0;
+
+    // label null defense
+    private static final String NULL_LABEL = "__L_null";
+    private boolean nullLabelEmitted = false;
 
     // -------- API principal --------
     public String emitProgram(TacProgram p) {
         data.setLength(0);
         text.setLength(0);
+        stringPool.clear();
+        strCount = 0;
 
         data.append(".data\n");
+
+        // Globales (arreglos/vars globales) -> .data
+        for (TacGlobal g : p.globals) {
+            data.append(".align 2\n");
+            data.append(g.name).append(":\n");
+            data.append("  .space ").append(g.bytes).append("\n");
+        }
+
         text.append(".text\n");
         text.append(".globl __start\n");
         text.append("__start:\n");
@@ -42,11 +64,19 @@ public class MipsGen {
         return new StringBuilder().append(data).append(text).toString();
     }
 
-    // -------- Función --------
+    // -------- Funcion --------
     private void emitFunction(TacFunction f) {
         slot.clear();
         paramQueue.clear();
         nextSlot = -4;
+        nullLabelEmitted = false;
+
+        // Pre-scan: fija slots y calcula frameBytes antes del prologo
+        preAllocateSlots(f);
+        // 8 bytes para guardar $ra y $fp en el fondo del frame
+        int localsBytes = slot.size() * 4;
+        frameBytes = align16(localsBytes + 8);
+        if (frameBytes < 16) frameBytes = 16;
 
         if ("main".equals(f.name)) {
             text.append(".globl main\n");
@@ -55,6 +85,7 @@ public class MipsGen {
 
         emitPrologue();
 
+        // Guardar params ($a0..$a3) en slots
         for (int i = 0; i < f.params.size() && i < 4; i++) {
             String pName = f.params.get(i);
             switch (i) {
@@ -65,7 +96,7 @@ public class MipsGen {
             }
         }
 
-        boolean sawRet = false;  // evitar epílogo duplicado
+        boolean sawRet = false;
 
         for (TacInstr i : f.code) {
             switch (i.op) {
@@ -75,15 +106,20 @@ public class MipsGen {
                 case AND, OR -> emitLogic(i);
                 case NOT -> emitNot(i);
 
-                case LABEL -> text.append(i.a).append(":\n");
+                case LOAD -> emitLoadMem(i);
+                case STORE -> emitStoreMem(i);
+
+                case LABEL -> emitLabel(i.a);
+
                 case IFZ -> {
                     emitLoad(i.a, "$t0");
-                    text.append("beq $t0, $zero, ").append(i.b).append("\n");
+                    text.append("beq $t0, $zero, ").append(canonLabel(i.b)).append("\n");
                 }
-                case GOTO -> text.append("j ").append(i.a).append("\n");
+                case GOTO -> text.append("j ").append(canonLabel(i.a)).append("\n");
 
                 case PARAM -> paramQueue.add(i.a);
                 case CALL -> emitCall(i);
+
                 case RET -> {
                     emitRet(i);
                     sawRet = true;
@@ -91,7 +127,6 @@ public class MipsGen {
             }
         }
 
-        // Si no hubo RET explícito, retornar 0 con epílogo una sola vez
         if (!sawRet) {
             emitReturn0();
         }
@@ -99,17 +134,20 @@ public class MipsGen {
 
     // -------- Frame --------
     private void emitPrologue() {
-        text.append("addiu $sp, $sp, -40\n");
-        text.append("sw $ra, 36($sp)\n");
-        text.append("sw $fp, 32($sp)\n");
-        text.append("move $fp, $sp\n");
+        // Reservar frame
+        text.append("addiu $sp, $sp, -").append(frameBytes).append("\n");
+        // Guardar $ra y $fp al fondo del frame
+        text.append("sw   $ra, 0($sp)\n");
+        text.append("sw   $fp, 4($sp)\n");
+        // $fp apunta al tope del frame (sp viejo): fp = sp + frameBytes
+        text.append("addiu $fp, $sp, ").append(frameBytes).append("\n");
     }
 
     private void emitEpilogue() {
-        text.append("move $sp, $fp\n");
-        text.append("lw   $fp, 32($sp)\n");
-        text.append("lw   $ra, 36($sp)\n");
-        text.append("addiu $sp, $sp, 40\n");
+        // Restaurar regs desde el fondo del frame (sp actual)
+        text.append("lw   $ra, 0($sp)\n");
+        text.append("lw   $fp, 4($sp)\n");
+        text.append("addiu $sp, $sp, ").append(frameBytes).append("\n");
         text.append("jr   $ra\n");
     }
 
@@ -121,9 +159,9 @@ public class MipsGen {
 
     // -------- Slots / Loads / Stores --------
     private int slotOf(String name) {
-        if (name == null) throw new IllegalArgumentException("nombre null");
+        if (name == null) throw new IllegalArgumentException("slot name null");
         return slot.computeIfAbsent(name, k -> {
-            int s = nextSlot;
+            int s = nextSlot;   // -4, -8, -12, ...
             nextSlot -= 4;
             return s;
         });
@@ -141,13 +179,12 @@ public class MipsGen {
         return s != null && s.length() >= 3 && s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'';
     }
 
-    // Convierte un literal char ('a', '\n', '\t', '\\', '\'', '\"', '\r') a su código ASCII
+    // Convierte char literal a ASCII (soporta escapes comunes)
     private static int charCode(String lit) {
-        if (!isCharLit(lit)) throw new IllegalArgumentException("No es char literal: " + lit);
-        String body = lit.substring(1, lit.length() - 1); // sin comillas simples
-        if (body.length() == 1) {
-            return (int) body.charAt(0);
-        }
+        if (!isCharLit(lit)) throw new IllegalArgumentException("Not char literal: " + lit);
+        String body = lit.substring(1, lit.length() - 1);
+        if (body.length() == 1) return (int) body.charAt(0);
+
         if (body.length() == 2 && body.charAt(0) == '\\') {
             char e = body.charAt(1);
             return switch (e) {
@@ -167,7 +204,7 @@ public class MipsGen {
     private void emitLoad(String src, String reg) {
         if (isInt(src)) {
             text.append("li   ").append(reg).append(", ").append(src).append("\n");
-        } else if (isCharLit(src)) {                       // <--- NUEVO: soportar 'a', '\n', etc.
+        } else if (isCharLit(src)) {
             text.append("li   ").append(reg).append(", ").append(charCode(src)).append("\n");
         } else {
             int off = slotOf(src);
@@ -180,16 +217,16 @@ public class MipsGen {
         text.append("sw   ").append(reg).append(", ").append(off).append("($fp)\n");
     }
 
-    // -------- Instrucciones TAC --------
+    // -------- TAC -> MIPS --------
     private void emitMov(TacInstr i) {
         if (i.r == null) return;
-        // r = a
+
         if (isInt(i.a)) {
             text.append("li   $t0, ").append(i.a).append("\n");
-        } else if (isStringLit(i.a)) {                     // <--- NUEVO: mover strings (dirección)
-            String label = newStringLabel(i.a);
+        } else if (isStringLit(i.a)) {
+            String label = stringLabel(i.a);
             text.append("la   $t0, ").append(label).append("\n");
-        } else if (isCharLit(i.a)) {                       // <--- NUEVO: mover char literal
+        } else if (isCharLit(i.a)) {
             text.append("li   $t0, ").append(charCode(i.a)).append("\n");
         } else {
             emitLoad(i.a, "$t0");
@@ -204,7 +241,7 @@ public class MipsGen {
         switch (i.op) {
             case ADD -> text.append("addu $t2, $t0, $t1\n");
             case SUB -> text.append("subu $t2, $t0, $t1\n");
-            case MUL -> text.append("mul  $t2, $t0, $t1\n"); // pseudo de SPIM
+            case MUL -> text.append("mul  $t2, $t0, $t1\n"); // SPIM pseudo
             case DIV -> {
                 text.append("div  $t0, $t1\n");
                 text.append("mflo $t2\n");
@@ -232,8 +269,8 @@ public class MipsGen {
                 text.append("slt  $t2, $t0, $t1\n");
                 text.append("xori $t2, $t2, 1\n");
             }
-            case EQ -> text.append("seq  $t2, $t0, $t1\n");  // pseudo
-            case NEQ -> text.append("sne  $t2, $t0, $t1\n"); // pseudo
+            case EQ -> text.append("seq  $t2, $t0, $t1\n");
+            case NEQ -> text.append("sne  $t2, $t0, $t1\n");
         }
         emitStore("$t2", i.r);
     }
@@ -258,7 +295,27 @@ public class MipsGen {
         emitStore("$t2", i.r);
     }
 
-    // -------- Llamadas --------
+    // -------- Memoria (global arrays) --------
+    // LOAD: r = load baseLabel, offsetBytes
+    private void emitLoadMem(TacInstr i) {
+        text.append("la   $t1, ").append(i.a).append("\n");
+        emitLoad(i.b, "$t2"); // offset in bytes
+        text.append("addu $t1, $t1, $t2\n");
+        text.append("lw   $t0, 0($t1)\n");
+        emitStore("$t0", i.r);
+    }
+
+    // STORE: store value -> baseLabel[offsetBytes]
+    // a=value, b=baseLabel, r=offsetBytes
+    private void emitStoreMem(TacInstr i) {
+        emitLoad(i.a, "$t0");
+        text.append("la   $t1, ").append(i.b).append("\n");
+        emitLoad(i.r, "$t2");
+        text.append("addu $t1, $t1, $t2\n");
+        text.append("sw   $t0, 0($t1)\n");
+    }
+
+    // -------- Calls --------
     private void emitCall(TacInstr i) {
         String fname = i.a;
         int n = 0;
@@ -274,25 +331,28 @@ public class MipsGen {
         }
 
         switch (fname) {
-            case "printInt" -> {
+            case "printInt", "print_int" -> {
                 emitArgToA0(args, 0);
                 text.append("li $v0, 1\nsyscall\n");
             }
-            case "printChar" -> {
+            case "printChar", "print_char" -> {
                 emitArgToA0(args, 0);
                 text.append("li $v0, 11\nsyscall\n");
             }
-            case "printString" -> {
+            case "printString", "print_str" -> {
                 if (!args.isEmpty() && isStringLit(args.get(0))) {
-                    String label = newStringLabel(args.get(0));
+                    String label = stringLabel(args.get(0));
                     text.append("la   $a0, ").append(label).append("\n");
                 } else {
                     emitArgToA0(args, 0);
                 }
                 text.append("li $v0, 4\nsyscall\n");
             }
+            case "println", "nl" -> {
+                text.append("li $a0, 10\n");
+                text.append("li $v0, 11\nsyscall\n");
+            }
             default -> {
-                // Cargar hasta 4 args en $a0..$a3
                 for (int k = 0; k < args.size() && k < 4; k++) {
                     emitArgToAi(args, k);
                 }
@@ -311,9 +371,9 @@ public class MipsGen {
         if (isInt(a)) {
             text.append("li   $a0, ").append(a).append("\n");
         } else if (isStringLit(a)) {
-            String label = newStringLabel(a);
+            String label = stringLabel(a);
             text.append("la   $a0, ").append(label).append("\n");
-        } else if (isCharLit(a)) {               // mantiene el salto de línea correcto
+        } else if (isCharLit(a)) {
             text.append("li   $a0, ").append(charCode(a)).append("\n");
         } else {
             emitLoad(a, "$a0");
@@ -333,7 +393,7 @@ public class MipsGen {
         if (isInt(a)) {
             text.append("li   ").append(reg).append(", ").append(a).append("\n");
         } else if (isStringLit(a)) {
-            String label = newStringLabel(a);
+            String label = stringLabel(a);
             text.append("la   ").append(reg).append(", ").append(label).append("\n");
         } else if (isCharLit(a)) {
             text.append("li   ").append(reg).append(", ").append(charCode(a)).append("\n");
@@ -342,14 +402,7 @@ public class MipsGen {
         }
     }
 
-
-    private String newStringLabel(String literal) {
-        String label = "str_" + (strCount++);
-        String body = literal.substring(1, literal.length() - 1); // sin comillas
-        data.append(label).append(": .asciiz \"").append(body).append("\"\n");
-        return label;
-    }
-
+    // -------- Return --------
     private void emitRet(TacInstr i) {
         if (i.a != null) {
             if (isInt(i.a)) {
@@ -364,5 +417,106 @@ public class MipsGen {
         }
         emitEpilogue();
         text.append("\n");
+    }
+
+    // -------- Labels (defense for null) --------
+    private void emitLabel(String lbl) {
+        String L = canonLabel(lbl);
+        if (lbl == null) {
+            if (nullLabelEmitted) {
+                // avoid "Label defined for second time ... null:"
+                text.append("# (skip duplicate null label)\n");
+                return;
+            }
+            nullLabelEmitted = true;
+        }
+        text.append(L).append(":\n");
+    }
+
+    private String canonLabel(String lbl) {
+        return (lbl == null) ? NULL_LABEL : lbl;
+    }
+
+    // -------- Strings --------
+    private String stringLabel(String literalWithQuotes) {
+        return stringPool.computeIfAbsent(literalWithQuotes, lit -> {
+            String label = "str_" + (strCount++);
+            String body = lit.substring(1, lit.length() - 1); // remove quotes
+
+            // Only protect against real quotes/newlines inside body (very defensive).
+            body = escapeAsciizBody(body);
+
+            data.append(label).append(": .asciiz \"").append(body).append("\"\n");
+            return label;
+        });
+    }
+
+    private static String escapeAsciizBody(String s) {
+        StringBuilder out = new StringBuilder();
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\"') out.append("\\\"");
+            else if (c == '\n') out.append("\\n");
+            else if (c == '\t') out.append("\\t");
+            else if (c == '\r') out.append("\\r");
+            else out.append(c);
+        }
+        return out.toString();
+    }
+
+    // -------- Pre-scan slots --------
+    private void preAllocateSlots(TacFunction f) {
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+
+        // params
+        for (String p : f.params) addName(names, p);
+
+        for (TacInstr i : f.code) {
+            switch (i.op) {
+                case LABEL, GOTO -> {
+                    // labels are not stack vars
+                }
+                case IFZ -> {
+                    addName(names, i.a);
+                    // i.b is label
+                }
+                case CALL -> {
+                    // i.a = function name, i.b = nargs
+                    addName(names, i.r); // return temp/var
+                }
+                case PARAM -> addName(names, i.a);
+                case RET -> addName(names, i.a);
+
+                case LOAD -> {
+                    // i.a is baseLabel (global), i.b offsetBytes, i.r dest
+                    addName(names, i.b);
+                    addName(names, i.r);
+                }
+                case STORE -> {
+                    // i.a value, i.b baseLabel (global), i.r offsetBytes
+                    addName(names, i.a);
+                    addName(names, i.r);
+                }
+                default -> {
+                    addName(names, i.a);
+                    addName(names, i.b);
+                    addName(names, i.r);
+                }
+            }
+        }
+
+        // allocate offsets deterministically
+        for (String n : names) slotOf(n);
+    }
+
+    private void addName(Set<String> names, String s) {
+        if (s == null) return;
+        if (isInt(s) || isStringLit(s) || isCharLit(s)) return;
+        names.add(s);
+    }
+
+    private static int align16(int n) {
+        int r = n % 16;
+        return (r == 0) ? n : (n + (16 - r));
     }
 }

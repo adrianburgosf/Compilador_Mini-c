@@ -97,7 +97,7 @@ public class Main {
 
                 // 6) Generación de IR y optimización
                 if (emitTac || emitMips) {
-                    TacGen gen = new TacGen();
+                    TacGen gen = new TacGen(st, collector);
                     gen.visit(tree);
                     TacProgram prog = gen.getProgram();
 

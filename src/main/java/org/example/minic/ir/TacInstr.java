@@ -29,6 +29,12 @@ public class TacInstr {
             case PARAM -> String.format("param %s", a);
             case CALL  -> String.format("%s = call %s, %s", r, a, b);
 
+            // memoria
+            // LOAD: r = *(base + off)
+            case LOAD  -> String.format("%s = load %s, %s", r, a, b);
+            // STORE: *(base + off) = a
+            case STORE -> String.format("store %s, %s, %s", a, b, r);
+
             // control de flujo
             case IFZ   -> String.format("ifz %s goto %s", a, b); // a=cond, b=label
             case GOTO  -> String.format("goto %s", a);           // a=label

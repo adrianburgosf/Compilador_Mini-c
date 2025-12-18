@@ -319,7 +319,7 @@ public class GuiApp {
                 }
 
                 if (emitTac || emitMips) {
-                    TacGen gen = new TacGen();
+                    TacGen gen = new TacGen(st, collector);
                     gen.visit(tree);
                     TacProgram prog = gen.getProgram();
 

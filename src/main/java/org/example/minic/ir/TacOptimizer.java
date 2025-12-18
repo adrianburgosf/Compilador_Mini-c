@@ -63,6 +63,9 @@ public class TacOptimizer {
     public TacProgram optimize(TacProgram in) {
         TacProgram out = new TacProgram();
 
+        // conservar la sección .data (arreglos globales)
+        out.globals.addAll(in.globals);
+
         for (TacFunction f : in.functions) {
             TacFunction g = new TacFunction(f.name);
             g.params.addAll(f.params);
@@ -78,7 +81,7 @@ public class TacOptimizer {
                     Integer v = eval(i.op, Integer.parseInt(i.a), Integer.parseInt(i.b));
                     if (v != null) {
                         // Constructor: (TacOp op, String a, String b, String r)  => a=src, r=dst
-                        g.emit(new TacInstr(TacOp.MOV, String.valueOf(v), null, i.r)); // r = const
+                        g.emit(new TacInstr(TacOp.MOV, i.r, String.valueOf(v), null)); // r = const
                         continue;
                     }
                 }

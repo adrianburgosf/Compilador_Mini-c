@@ -16,6 +16,9 @@ public enum TacOp {
     // llamadas
     PARAM, CALL,
 
+    // memoria
+    LOAD, STORE,
+
     // control de flujo
     IFZ, GOTO, LABEL   // <-- NUEVO
 }
