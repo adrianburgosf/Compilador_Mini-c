@@ -2,7 +2,7 @@ package org.example.minic.ir;
 
 /**
  * Declaración global en .data.
- * La usamos para reservar memoria (.space) para arreglos globales.
+ * La usamos para reservar memoria para arreglos globales.
  */
 public class TacGlobal {
     public final String name;

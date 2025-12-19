@@ -19,13 +19,13 @@ import java.util.List;
 
 /**
  * Genera TAC (three-address code) desde el parse tree.
- *
  * Notas clave para este Mini-C:
  * - Variables locales/params se representan como "slots" (sus nombres).
  * - Variables/arreglos globales se representan como etiquetas en .data y se
  *   acceden mediante LOAD/STORE con offset en bytes.
- * - Arreglos usan indexación 1-based (como en FinalTest.mc): offset = (idx-1).
+ * - Arreglos usan indexación 1-based: offset = (idx-1).
  */
+
 public final class TacGen extends MiniCBaseVisitor<String> {
 
     private final SymbolTable st;
@@ -65,10 +65,6 @@ public final class TacGen extends MiniCBaseVisitor<String> {
 
     /**
      * Devuelve el scope más cercano para un nodo, subiendo por los padres.
-     *
-     * Importante: CollectSymbols solo anota scopes explícitos (program, functionDecl, block).
-     * Si aquí no escalamos, resoluciones como variables locales en varDecl/primary/assignment
-     * fallan y se omiten inicializaciones (ej: int v = sum2(3,4);) o se confunden global/local.
      */
     private Scope scopeOf(ParseTree node) {
         ParseTree p = node;
@@ -120,7 +116,7 @@ public final class TacGen extends MiniCBaseVisitor<String> {
     /**
      * Calcula offset en bytes para un acceso a arreglo N-dim.
      * dims = [d0,d1,...] y indices = [i0,i1,...] (cada i es una expr visitada).
-     * Indexación es 1-based => usamos (i-1).
+     * Indexación es 1-based => se usa (i-1).
      */
     private String offsetBytesForArray(int[] dims, List<String> indices) {
         int n = Math.min(dims.length, indices.size());
@@ -326,9 +322,9 @@ public final class TacGen extends MiniCBaseVisitor<String> {
 
     @Override
     public String visitVarDecl(MiniCParser.VarDeclContext ctx) {
-        // VarDecl puede aparecer en global o en bloque.
-        // Para globales, ya reservamos espacio en visitProgram().
-        // Aquí sólo generamos MOV para inicializaciones locales.
+        // VarDecl puede aparecer en global o en bloque
+        // Para globales, ya reservamos espacio en visitProgram()
+        // Aquí sólo generamos MOV para inicializaciones locales
 
         Scope sc = scopeOf(ctx);
         boolean inGlobal = (sc == st.globals());
@@ -342,13 +338,10 @@ public final class TacGen extends MiniCBaseVisitor<String> {
             String rhs = visit(idec.expr());
 
             if (inGlobal || isGlobal(v)) {
-                // no soportamos init en data directamente: emitimos store al inicio de main?
-                // Para evitar romper tests, lo ignoramos si ocurre.
-                // (Los tests actuales no inicializan globales.)
                 continue;
             }
 
-            // Si es arreglo local (no usado en tests), no intentamos reservar stack.
+            // Si es arreglo local no usado en tests, no intentamos reservar stack
             if (v.dims != null && v.dims.length > 0) continue;
 
             emit(new TacInstr(TacOp.MOV, rhs, null, name));
@@ -532,7 +525,7 @@ public final class TacGen extends MiniCBaseVisitor<String> {
             return (ret != null) ? ret : "0";
         }
 
-        // lvalue (incluye arreglos)
+        // lvalue incluye arreglos
         if (ctx.lvalue() != null) {
             return visit(ctx.lvalue());
         }

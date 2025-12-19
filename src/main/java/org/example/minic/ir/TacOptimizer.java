@@ -6,7 +6,7 @@ public class TacOptimizer {
         return s != null && s.matches("-?\\d+");
     }
 
-    // Helpers por nombre (para tolerar variantes en el enum)
+    // Helpers por nombre para tolerar variantes en el enum
     private static boolean isAdd(TacOp op){ return op == TacOp.ADD || "ADD".equals(op.name()); }
     private static boolean isSub(TacOp op){ return op == TacOp.SUB || "SUB".equals(op.name()); }
     private static boolean isMul(TacOp op){ return op == TacOp.MUL || "MUL".equals(op.name()); }

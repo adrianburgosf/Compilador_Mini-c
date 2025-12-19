@@ -6,12 +6,6 @@ import java.util.*;
 
 /**
  * TAC -> MIPS32 (PCSpim).
- *
- * Fixes:
- * 1) Slots usan offsets negativos respecto a $fp (fp-4, fp-8,...).
- *    Entonces $fp debe apuntar al "tope" del frame (el $sp viejo),
- *    no al $sp ya bajado. Si no, escribes fuera del frame y todo da 0.
- * 2) Evita labels null: (PCSpim warning "Label defined second time ... null:")
  */
 public class MipsGen {
 
@@ -179,7 +173,7 @@ public class MipsGen {
         return s != null && s.length() >= 3 && s.charAt(0) == '\'' && s.charAt(s.length() - 1) == '\'';
     }
 
-    // Convierte char literal a ASCII (soporta escapes comunes)
+    // Convierte char literal a ASCII soporta escapes comunes
     private static int charCode(String lit) {
         if (!isCharLit(lit)) throw new IllegalArgumentException("Not char literal: " + lit);
         String body = lit.substring(1, lit.length() - 1);
@@ -441,9 +435,7 @@ public class MipsGen {
     private String stringLabel(String literalWithQuotes) {
         return stringPool.computeIfAbsent(literalWithQuotes, lit -> {
             String label = "str_" + (strCount++);
-            String body = lit.substring(1, lit.length() - 1); // remove quotes
-
-            // Only protect against real quotes/newlines inside body (very defensive).
+            String body = lit.substring(1, lit.length() - 1);
             body = escapeAsciizBody(body);
 
             data.append(label).append(": .asciiz \"").append(body).append("\"\n");
@@ -474,11 +466,10 @@ public class MipsGen {
         for (TacInstr i : f.code) {
             switch (i.op) {
                 case LABEL, GOTO -> {
-                    // labels are not stack vars
                 }
                 case IFZ -> {
                     addName(names, i.a);
-                    // i.b is label
+                    // i.b es label
                 }
                 case CALL -> {
                     // i.a = function name, i.b = nargs
@@ -504,8 +495,6 @@ public class MipsGen {
                 }
             }
         }
-
-        // allocate offsets deterministically
         for (String n : names) slotOf(n);
     }
 

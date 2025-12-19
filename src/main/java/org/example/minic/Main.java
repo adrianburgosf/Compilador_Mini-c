@@ -42,6 +42,7 @@ public class Main {
         System.err.println("  --check-uses   : valida no declaradas y aridad de llamadas");
         System.err.println("  --emit-tac     : imprime TAC (respeta -O si se pasó)");
         System.err.println("  --emit-mips    : imprime MIPS32 a stdout (respeta -O si se pasó)");
+        System.err.println("  --dump-parse-tree : imprime el parse tree (ANTLR) y continúa si hay más flags");
         System.exit(1);
     }
 
@@ -54,11 +55,13 @@ public class Main {
         boolean optimize = false;        // -O
         boolean dumpIr = false;          // --dump-ir
 
-        // Legacy flags (still useful for debugging)
+        // Legacy flags
         boolean dumpSymbols = false;
         boolean checkUses   = false;
         boolean emitTac     = false;
         boolean emitMipsStdout = false;
+        boolean dumpParseTree = false;
+
 
         String pathStr = null;
 
@@ -77,6 +80,8 @@ public class Main {
                 case "--check-uses"   -> checkUses   = true;
                 case "--emit-tac"     -> emitTac     = true;
                 case "--emit-mips"    -> emitMipsStdout = true;
+                case "--dump-parse-tree" -> dumpParseTree = true;
+
 
                 default -> {
                     if (a.startsWith("-")) usageAndExit();
@@ -87,7 +92,6 @@ public class Main {
 
         if (pathStr == null) usageAndExit();
         if (emitAsmFile && (outAsm == null || outAsm.isBlank())) {
-            // el formato requerido por la guía siempre incluye -o
             usageAndExit();
         }
 
@@ -106,8 +110,12 @@ public class Main {
 
         try {
             ParseTree tree = parser.program();
-
-            // Entrar a semántica si se pidió cualquiera de estas banderas (spec o legacy)
+            if (dumpParseTree) {
+                System.out.println("=== PARSE TREE ===");
+                System.out.println(tree.toStringTree(parser));
+                System.out.println();
+            }
+            // Entrar a semántica si se pidió cualquiera de estas banderas
             if (dumpSymbols || checkUses || emitTac || emitMipsStdout || emitAsmFile || dumpIr || optimize) {
                 SymbolTable st = new SymbolTable();
                 org.example.minic.semantics.Builtins.install(st);
@@ -125,7 +133,7 @@ public class Main {
                 TypeChecker typer = new TypeChecker(st, collector);
                 typer.visit(tree);
 
-                // 4) Dump de símbolos (si se pidió)
+                // 4) Dump de símbolos
                 if (dumpSymbols) {
                     System.out.println(st.dump());
                 }
@@ -181,10 +189,10 @@ public class Main {
                     return;
                 }
 
-                // si solo pediste dump/check y nada más, salimos limpio
+                // si solo pediste dump/check y nada más
                 return;
             } else {
-                // Sin banderas: muestra el árbol (útil para debug)
+                // Sin banderas: muestra el árbol
                 System.out.println(tree.toStringTree(parser));
             }
         } catch (ParseCancellationException ex) {
